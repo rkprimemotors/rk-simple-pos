@@ -1,0 +1,54 @@
+name: Deploy to aaPanel
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Configure SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+
+    - name: Prepare for deployment
+      run: |
+        # Create a list of files to deploy, excluding secrets and .htaccess
+        find . -type f -not -path "./data/*" -not -path "./.git/*" -not -name ".htaccess" > files_to_deploy.txt
+        mkdir -p to_deploy
+        while IFS= read -r file; do
+          mkdir -p "to_deploy/$(dirname "$file")"
+          cp "$file" "to_deploy/$file"
+        done < files_to_deploy.txt
+
+    - name: Deploy to server
+      env:
+        SERVER_USER: ${{ secrets.SERVER_USER }}
+        SERVER_IP: ${{ secrets.SERVER_IP }}
+        SERVER_PATH: ${{ secrets.DEPLOY_PATH }}
+      run: |
+        echo "Deploying to server..."
+        # Use scp with recursive option to copy the directory structure
+        scp -r to_deploy/* $SERVER_USER@$SERVER_IP:$SERVER_PATH/
+        
+        # Execute commands on the server
+        ssh $SERVER_USER@$SERVER_IP << EOF
+        cd $SERVER_PATH
+        sudo chown -R www:www .
+        sudo chmod -R 755 .
+        sudo service nginx restart
+        sudo service php-fpm restart
+        echo "Deployment successful!"
+        EOF
